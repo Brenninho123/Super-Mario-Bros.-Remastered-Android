@@ -1,22 +1,25 @@
-name: Android Release CI
+name: Android Build CI
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
-  build-release:
+  build:
     runs-on: ubuntu-latest
 
     env:
-      ANDROID_SDK_ROOT: ${{ runner.tool_cache }}/android-sdk
       JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+      ANDROID_SDK_ROOT: $HOME/android-sdk
 
     steps:
       - uses: actions/checkout@v3
 
-      - name: Set up JDK
+      - name: Set up JDK 17
         uses: actions/setup-java@v3
         with:
           distribution: temurin
@@ -27,37 +30,43 @@ jobs:
         with:
           packages: ''
 
-      - name: Add SDK tools to PATH
+      - name: Add sdkmanager and platform-tools to PATH
         run: |
           echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
           echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
 
-      - name: Accept Licenses & Install SDK
+      - name: Debug PATH and environment
+        run: |
+          echo "PATH=$PATH"
+          which sdkmanager || echo "sdkmanager not found"
+          ls -l $ANDROID_SDK_ROOT/cmdline-tools/latest/bin
+
+      - name: Install SDK packages
         run: |
           yes | sdkmanager --sdk_root=$ANDROID_SDK_ROOT --licenses
-          sdkmanager --sdk_root=$ANDROID_SDK_ROOT "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          sdkmanager --sdk_root=$ANDROID_SDK_ROOT "platform-tools"
+          sdkmanager --sdk_root=$ANDROID_SDK_ROOT "platforms;android-34"
+          sdkmanager --sdk_root=$ANDROID_SDK_ROOT "build-tools;34.0.0"
 
-      - name: Make Gradle executable
-        run: chmod +x gradlew
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
 
-      - name: Decode Keystore
+      - name: Stop Gradle Daemon & Limit Memory
         run: |
-          echo "${{ secrets.ANDROID_SIGNING_KEY }}" | base64 -d > release.keystore
+          ./gradlew --stop || true
+          echo "org.gradle.jvmargs=-Xmx2g -Dorg.gradle.daemon=false -XX:+UseContainerSupport" >> gradle.properties
+          echo "org.gradle.parallel=false" >> gradle.properties
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug
 
       - name: Build Release APK
         run: ./gradlew assembleRelease
 
-      - name: Sign Release APK
-        uses: r0adkll/sign-android-release@v1
-        with:
-          releaseDirectory: app/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.ANDROID_SIGNING_KEY }}
-          alias: ${{ secrets.ANDROID_ALIAS }}
-          keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
-
-      - name: Upload Signed APK
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: signed-release-apk
-          path: app/build/outputs/apk/release/*.apk
+          name: android-apks
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
