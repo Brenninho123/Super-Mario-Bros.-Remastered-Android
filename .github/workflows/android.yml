@@ -1,0 +1,66 @@
+name: Android Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    env:
+      JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+
+    steps:
+      # 1️⃣ Checar código
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 2️⃣ Configurar JDK
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # 3️⃣ Configurar Android SDK
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v2
+        with:
+          api-level: 34
+          build-tools: 34.0.0
+          ndk: 25.2.9519653
+          cmake: 3.24.1
+
+      # 4️⃣ Cache Gradle para acelerar builds
+      - name: Cache Gradle packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle
+
+      # 5️⃣ Build do APK
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug
+
+      # 6️⃣ Build do APK de release
+      - name: Build Release APK
+        run: ./gradlew assembleRelease
+
+      # 7️⃣ Salvar APKs como artefatos
+      - name: Upload APKs
+        uses: actions/upload-artifact@v3
+        with:
+          name: apk
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/release/app-release.apk
