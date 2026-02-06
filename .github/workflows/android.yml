@@ -1,116 +1,207 @@
-name: Android Build
+name: 🎮 Super Mario Bros. Android Build
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
-  workflow_dispatch:  # Permite execução manual
+    branches: [main, master]
+  workflow_dispatch:  # Execução manual
+
+env:
+  GRADLE_VERSION: '8.5'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
+    - name: 📥 Checkout do código
       uses: actions/checkout@v4
       
-    - name: Set up JDK 17
+    - name: ☕ Configurar JDK 17
       uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
         java-version: '17'
         
-    - name: Setup Android SDK
+    - name: 🤖 Configurar Android SDK
       uses: android-actions/setup-android@v3
-      
-    # PASSO DE DIAGNÓSTICO (opcional, remove depois)
-    - name: Debug project structure
+      with:
+        api-level: 33
+        build-tools-version: '33.0.2'
+        ndk-version: '25.2.9519653'
+        
+    - name: 🔍 Verificar estrutura do projeto
+      id: project-struct
       run: |
-        echo "=== ESTRUTURA DO PROJETO ==="
+        echo "Estrutura encontrada:"
         ls -la
         echo ""
-        echo "=== ARQUIVOS GRADLE ==="
-        find . -name "*.gradle*" -o -name "*.kts" 2>/dev/null | head -20 || true
-        echo ""
-        echo "=== PASTA ANDROID ==="
-        find . -name "AndroidManifest.xml" -o -name "build.gradle" 2>/dev/null | head -10 || true
+        # Verifica se é projeto Gradle
+        if find . -name "*.gradle*" -o -name "*.kts" | grep -q .; then
+          echo "GRADLE_PROJECT=true" >> $GITHUB_OUTPUT
+        else
+          echo "GRADLE_PROJECT=false" >> $GITHUB_OUTPUT
+        fi
         
-    # CONSTRUÇÃO FLEXÍVEL (funciona com ou sem gradlew)
-    - name: Build Android project
+    - name: 📦 Configurar Gradle (se necessário)
+      if: steps.project-struct.outputs.GRADLE_PROJECT == 'true'
       run: |
-        # Método 1: Se existir gradlew
-        if [ -f "./gradlew" ]; then
-          echo "✅ Encontrado gradlew, usando wrapper..."
+        # Verifica se gradlew existe
+        if [ ! -f "./gradlew" ]; then
+          echo "📥 Instalando Gradle ${{ env.GRADLE_VERSION }}..."
+          wget -q https://services.gradle.org/distributions/gradle-${{ env.GRADLE_VERSION }}-bin.zip
+          sudo unzip -q -d /opt/gradle gradle-${{ env.GRADLE_VERSION }}-bin.zip
+          echo "/opt/gradle/gradle-${{ env.GRADLE_VERSION }}/bin" >> $GITHUB_PATH
+        else
+          echo "✅ gradlew encontrado"
           chmod +x ./gradlew
-          ./gradlew assembleDebug || ./gradlew build
+        fi
+        
+    - name: 🏗️ Construir projeto
+      id: build
+      run: |
+        echo "Iniciando construção..."
+        
+        # Tenta com gradlew primeiro
+        if [ -f "./gradlew" ]; then
+          echo "🔧 Usando ./gradlew..."
+          ./gradlew assembleDebug --no-daemon --stacktrace
           
-        # Método 2: Se encontrar build.gradle mas não gradlew  
-        elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ] || [ $(find . -name "*.gradle*" -o -name "*.kts" 2>/dev/null | wc -l) -gt 0 ]; then
-          echo "📦 Projeto Gradle detectado (sem wrapper)..."
-          echo "Instalando Gradle..."
+        # Fallback para gradle instalado
+        elif which gradle > /dev/null; then
+          echo "🔧 Usando gradle do sistema..."
           
-          # Instala Gradle
-          wget https://services.gradle.org/distributions/gradle-8.5-bin.zip
-          sudo unzip -d /opt/gradle gradle-8.5-bin.zip
-          export PATH=$PATH:/opt/gradle/gradle-8.5/bin
-          
-          # Tenta construir
-          if [ -f "build.gradle" ]; then
-            gradle assembleDebug || gradle build
+          # Encontra o diretório principal do projeto Android
+          if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+            gradle assembleDebug --no-daemon --stacktrace
           else
-            # Procura o primeiro build.gradle
-            GRADLE_FILE=$(find . -name "build.gradle" -o -name "build.gradle.kts" | head -1)
-            echo "Usando arquivo: $GRADLE_FILE"
-            cd $(dirname "$GRADLE_FILE")
-            gradle assembleDebug || gradle build
+            # Procura subprojetos
+            PROJECT_DIR=$(find . -name "build.gradle" -o -name "build.gradle.kts" | head -1 | xargs dirname)
+            if [ -n "$PROJECT_DIR" ]; then
+              echo "📁 Entrando em $PROJECT_DIR"
+              cd "$PROJECT_DIR"
+              gradle assembleDebug --no-daemon --stacktrace
+            else
+              echo "❌ Nenhum arquivo build.gradle encontrado"
+              exit 1
+            fi
           fi
           
-        # Método 3: Para projetos Unity (se for o caso)
-        elif [ -f "Assets" ] || [ -d "Assets" ]; then
-          echo "🎮 Possível projeto Unity detectado..."
-          echo "⚠️  Configure build específica para Unity"
-          
         else
-          echo "❌ Nenhum projeto de build detectado!"
-          echo "Conteúdo da pasta:"
-          ls -la
+          echo "❌ Nenhuma ferramenta de build disponível"
           exit 1
         fi
         
-    # ENCONTRA E FAZ UPLOAD DO APK
-    - name: Find and upload APK
+    - name: 🔎 Localizar APKs gerados
+      id: find-apks
       if: success()
       run: |
-        echo "🔍 Procurando APKs..."
-        find . -name "*.apk" 2>/dev/null | while read apk; do
-          echo "Encontrado: $apk"
-        done
+        echo "Procurando APKs..."
         
-        APK_COUNT=$(find . -name "*.apk" 2>/dev/null | wc -l)
-        if [ $APK_COUNT -eq 0 ]; then
-          echo "⚠️  Nenhum APK encontrado!"
-          # Procura em locais comuns do Android
-          find . -path "*/build/outputs/apk/*" -name "*.apk" 2>/dev/null | while read apk; do
-            echo "APK em local comum: $apk"
+        # Procura em locais padrão do Android
+        APK_PATHS=()
+        
+        # 1. Procura recursivamente
+        while IFS= read -r apk; do
+          APK_PATHS+=("$apk")
+          echo "🔍 Encontrado: $apk"
+        done < <(find . -name "*.apk" -type f 2>/dev/null)
+        
+        # 2. Se não encontrou, procura em paths comuns
+        if [ ${#APK_PATHS[@]} -eq 0 ]; then
+          COMMON_PATHS=(
+            "*/build/outputs/apk/**/*.apk"
+            "app/build/outputs/apk/**/*.apk"
+            "*/build/**/*.apk"
+          )
+          
+          for pattern in "${COMMON_PATHS[@]}"; do
+            for apk in $pattern; do
+              if [ -f "$apk" ]; then
+                APK_PATHS+=("$apk")
+                echo "🔍 Encontrado (padrão): $apk"
+              fi
+            done
           done
-        else
-          echo "✅ Encontrados $APK_COUNT APK(s)"
         fi
         
-    - name: Upload APK artifact
-      if: success()
+        # Exporta paths para próximo passo
+        if [ ${#APK_PATHS[@]} -gt 0 ]; then
+          echo "APK_COUNT=${#APK_PATHS[@]}" >> $GITHUB_OUTPUT
+          echo "APK_PATHS=${APK_PATHS[*]}" >> $GITHUB_OUTPUT
+        else
+          echo "APK_COUNT=0" >> $GITHUB_OUTPUT
+          echo "⚠️ Nenhum APK encontrado!"
+        fi
+        
+    - name: 📤 Upload do APK (se encontrado)
+      if: steps.find-apks.outputs.APK_COUNT != '0'
       uses: actions/upload-artifact@v4
       with:
-        name: android-apk
+        name: super-mario-apk
         path: |
-          **/*.apk
-          **/build/outputs/apk/**/*.apk
-        retention-days: 7
+          ${{ steps.find-apks.outputs.APK_PATHS }}
+        retention-days: 30
+        if-no-files-found: error
         
-    # LIMPEZA (opcional)
-    - name: Clean up
+    - name: 📊 Upload do relatório de build
       if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-reports
+        path: |
+          **/build/reports/
+          **/build/outputs/logs/
+        retention-days: 7
+        if-no-files-found: ignore
+        
+    - name: 🧪 Executar testes (opcional)
+      if: success()
       run: |
-        echo "🧹 Limpeza concluída"
-        df -h
+        if [ -f "./gradlew" ]; then
+          ./gradlew test --no-daemon || echo "⚠️ Testes falharam, continuando..."
+        elif which gradle > /dev/null; then
+          gradle test --no-daemon || echo "⚠️ Testes falharam, continuando..."
+        fi
+
+  # Job adicional para criar Release
+  release:
+    name: 🚀 Criar Release
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: 📥 Baixar APK do build
+      uses: actions/download-artifact@v4
+      with:
+        name: super-mario-apk
+        pattern: '*.apk'
+        
+    - name: 🏷️ Criar Tag e Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: "*.apk"
+        tag_name: "v1.0.${{ github.run_number }}"
+        name: "Super Mario Bros. v1.0.${{ github.run_number }}"
+        body: |
+          ## 🎮 Super Mario Bros. Remastered - Android
+          
+          Build automática #${{ github.run_number }}
+          
+          ### 📋 Detalhes:
+          - Commit: ${{ github.sha }}
+          - Data: ${{ github.event.head_commit.timestamp }}
+          - Branch: ${{ github.ref_name }}
+          
+          ### 📱 Instalação:
+          1. Baixe o APK acima
+          2. Habilite "Fontes desconhecidas" no Android
+          3. Instale e divirta-se!
+          
+          ⚠️ **Atenção**: Este é um projeto educacional/fan-made.
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
