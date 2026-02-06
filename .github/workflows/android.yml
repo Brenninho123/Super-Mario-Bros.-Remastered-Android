@@ -17,49 +17,66 @@ jobs:
       ANDROID_SDK_ROOT: ${{ runner.tool_cache }}/android-sdk
 
     steps:
+      # 1️⃣ Checkout do código
       - uses: actions/checkout@v3
 
+      # 2️⃣ Configurar JDK 17
       - name: Set up JDK 17
         uses: actions/setup-java@v3
         with:
           distribution: temurin
           java-version: 17
 
+      # 3️⃣ Setup Android SDK básico
       - name: Setup Android SDK Tools
         uses: android-actions/setup-android@v3
         with:
           packages: ''
 
-      - name: Add sdkmanager to PATH
+      # 4️⃣ Adicionar sdkmanager e platform-tools ao PATH
+      - name: Add SDK tools to PATH
         run: |
           echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
           echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
 
-      - name: Accept Licenses
-        run: yes | sdkmanager --sdk_root=$ANDROID_SDK_ROOT --licenses
-
-      - name: Install necessary SDK packages
+      # 5️⃣ Debug PATH e arquivos antes de instalar
+      - name: Debug environment
         run: |
+          echo "PATH: $PATH"
+          which sdkmanager || echo "sdkmanager NOT FOUND"
+          ls -l $ANDROID_SDK_ROOT/cmdline-tools/latest/bin
+          if [ -f gradlew ]; then echo "gradlew FOUND"; else echo "gradlew NOT FOUND"; fi
+          ls -l .
+
+      # 6️⃣ Aceitar licenças e instalar Build Tools + plataformas
+      - name: Accept Licenses & Install SDK Packages
+        run: |
+          yes | sdkmanager --sdk_root=$ANDROID_SDK_ROOT --licenses
           sdkmanager --sdk_root=$ANDROID_SDK_ROOT "platform-tools"
           sdkmanager --sdk_root=$ANDROID_SDK_ROOT "platforms;android-34"
           sdkmanager --sdk_root=$ANDROID_SDK_ROOT "build-tools;34.0.0"
 
-      - name: Make Gradle wrapper executable
+      # 7️⃣ Garantir gradlew executável
+      - name: Ensure gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Stop Gradle Daemon & Limit Memory
+      # 8️⃣ Parar daemon do Gradle e limitar memória
+      - name: Stop Gradle Daemon & Optimize Memory
         run: |
           ./gradlew --stop || true
           echo "org.gradle.jvmargs=-Xmx2g -Dorg.gradle.daemon=false -XX:+UseContainerSupport" >> gradle.properties
           echo "org.gradle.parallel=false" >> gradle.properties
 
+      # 9️⃣ Build Debug APK
       - name: Build Debug APK
         run: ./gradlew assembleDebug
 
+      # 🔟 Build Release APK
       - name: Build Release APK
         run: ./gradlew assembleRelease
 
-      - name: Upload APK Artifacts
+      # 1️⃣1️⃣ Upload APKs como artifacts
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
           name: android-apks
