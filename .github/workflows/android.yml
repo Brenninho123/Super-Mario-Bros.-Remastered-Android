@@ -14,7 +14,7 @@ jobs:
 
     env:
       JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
-      ANDROID_SDK_ROOT: /usr/local/android-sdk
+      ANDROID_SDK_ROOT: ${{ runner.tool_cache }}/android-sdk
 
     steps:
       - uses: actions/checkout@v3
@@ -25,24 +25,29 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Install Android Command Line Tools
-        run: |
-          sudo mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
-          sudo chown -R $USER:$USER $ANDROID_SDK_ROOT
-          wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
-          unzip cmdline-tools.zip -d $ANDROID_SDK_ROOT/cmdline-tools
-          mv $ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools $ANDROID_SDK_ROOT/cmdline-tools/latest
-          echo "export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH" >> $GITHUB_ENV
+      - name: Setup Android SDK Tools
+        uses: android-actions/setup-android@v3
+        with:
+          packages: ''
 
-      - name: Accept Licenses and Install Build Tools
+      - name: Add sdkmanager to PATH
         run: |
-          yes | sdkmanager --sdk_root=$ANDROID_SDK_ROOT --licenses
-          sdkmanager --sdk_root=$ANDROID_SDK_ROOT "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
 
-      - name: Grant execute permission for Gradle
+      - name: Accept Licenses
+        run: yes | sdkmanager --sdk_root=$ANDROID_SDK_ROOT --licenses
+
+      - name: Install necessary SDK packages
+        run: |
+          sdkmanager --sdk_root=$ANDROID_SDK_ROOT "platform-tools"
+          sdkmanager --sdk_root=$ANDROID_SDK_ROOT "platforms;android-34"
+          sdkmanager --sdk_root=$ANDROID_SDK_ROOT "build-tools;34.0.0"
+
+      - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Stop Gradle Daemon + Limit Memory
+      - name: Stop Gradle Daemon & Limit Memory
         run: |
           ./gradlew --stop || true
           echo "org.gradle.jvmargs=-Xmx2g -Dorg.gradle.daemon=false -XX:+UseContainerSupport" >> gradle.properties
@@ -54,7 +59,7 @@ jobs:
       - name: Build Release APK
         run: ./gradlew assembleRelease
 
-      - name: Upload APKs
+      - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: android-apks
